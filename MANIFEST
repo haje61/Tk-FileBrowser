@@ -1,0 +1,10 @@
+Changes
+lib/Tk/FileBrowser.pm
+lib/Tk/FileBrowser/Header.pm
+LICENSE
+Makefile.PL
+MANIFEST
+README.md
+t/Tk-FileBrowser-Header.t
+t/Tk-FileBrowser.t
+
