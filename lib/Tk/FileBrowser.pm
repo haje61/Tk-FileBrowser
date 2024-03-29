@@ -592,7 +592,7 @@ sub IsLoaded {
 	return $data->{'loaded'}
 }
 
-=item B<load>I<$folder>
+=item B<load>I<($folder)>
 
 loads $folder into memory and refreshes the display
 if succesfull.
