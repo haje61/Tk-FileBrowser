@@ -57,7 +57,7 @@ sub Populate {
 	
 
 	my $sort = $self->Label(
-		-image => $self->{ICONS}->{'none'},
+#		-image => $self->{ICONS}->{'none'},
 	)->pack(-side => 'right');
 	$self->Advertise(Sort => $sort);
 	
@@ -118,7 +118,6 @@ sub Resize {
 sub SetSort {
 	my ($self, $sort) = @_;
 	my $icon = $self->{ICONS}->{$sort};
-	my $name = $self->Subwidget('Label')->cget('-text');
 	$self->Subwidget('Sort')->configure(-image => $icon);	
 }
 
@@ -172,6 +171,7 @@ sub sortorder {
 }
 
 1;
+
 
 
 

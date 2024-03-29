@@ -9,23 +9,24 @@ BEGIN {
 	use_ok('Tk::FileBrowser')
 };
 
+$delay = 1000;
+
 createapp;
 
 my $fb;
 if (defined $app) {
 	$app->geometry('640x400+100+100');
 	$fb = $app->FileBrowser(
-		-columns => [qw[Size Modified Accessed Created]],
+		-columns => [qw[Size Modified Created Accessed]],
+		-selectmode => 'extended',
+#		-sorton => 'Modified',
+		-sorton => 'Size',
+#		-sortorder => 'ascending',
+		-invokefile => sub { my $f = shift; print "invoking: $f\n" },
 	)->pack(
 		-expand => 1,
 		-fill => 'both',
 	);
-#	$fb->autosetmode;
-	my $entry = 'home';
-	my $t = $fb->Subwidget('Tree');
-#	print "subjwidget not found\n" unless defined $t;
-#	$fb->add($entry);
-#	$t->itemCreate($entry, 0, -text => $entry);
 }
 
 push @tests, (
@@ -36,6 +37,13 @@ push @tests, (
 
 
 starttesting;
+
+
+
+
+
+
+
 
 
 
