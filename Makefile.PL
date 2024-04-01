@@ -11,7 +11,7 @@ WriteMakefile(
 		'File::Basename' => 0,
 		'Test::Tk' => '3.02',
 		'Tk' => '800.024',
-		'Tk::ITree' => '0.01',
+		'Tk::ITree' => '0.03',
 		'Tk::ListEntry' => '0.02',
 	},
 	ABSTRACT_FROM => "lib/Tk/$pm.pm",
@@ -29,6 +29,7 @@ WriteMakefile(
 		}}) : ()
 	),
 );
+
 
 
 

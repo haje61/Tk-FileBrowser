@@ -13,6 +13,7 @@ Following Perl modules should be installed:
   * Test::Tk
   * Tk
   * Tk::ITree
+  * Tk::ListEntry
 
 They are installable through cpan.
 
@@ -28,4 +29,5 @@ After make you can do the following for visual inspection
     perl -Mblib t/Tk-FileBrowser.t show
     perl -Mblib t/Tk-FileBrowser-Header.t show
     
+
 

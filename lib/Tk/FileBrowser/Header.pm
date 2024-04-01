@@ -1,5 +1,11 @@
 package Tk::FileBrowser::Header;
 
+=head1 NAME
+
+Tk::FileBrowser::Header - Resizeable header for any HList like widget
+
+=cut
+
 use strict;
 use warnings;
 use vars qw($VERSION);
@@ -32,20 +38,81 @@ static unsigned char up_bits[] = {
 ';
 
 
+=head1 SYNOPSIS
+
+ require Tk::HList;
+ require Tk::FileBrowser::Header;
+ my $hlist = $window->HList(
+ 	-columns => 1,
+ 	-header => 1
+ )->pack;
+ my $h = $hlist->Header(
+    -column => 0,
+    -text => 'Header',
+ );
+ $hlist->headerCreate(0, -itemtype => 'window', -widget => $h);
+
+=head1 DESCRIPTION
+
+A resizeable header suitable for any HList like widget. Also a sort indicator is provided.
+
+=head1 CONFIG VARIABLES
+
+=over 4
+
+=item Switch: B<-column>
+
+Obligatory! Only available at ceate time.
+
+Column number of the column for this header.
+
+=item Switch: B<-sortcall>
+
+Callback, called whenever the user clicks the header. Gives name and -sortorder as parameters.
+
+=item Switch: B<-sortorder>
+
+Default value 'none', Can be 'ascending', 'descending' or 'none'.
+
+=item Switch: B<-text>
+
+Text to be displayed as header name.
+
+=back
+
+=head1 ADVERTISED SUBWIDGETS
+
+All of class Label.
+
+=over 4
+
+=item B<Label>
+
+=item B<Sizer>
+
+=item B<Sort>
+
+=back
+
+=cut
+
 
 sub Populate {
 	my ($self,$args) = @_;
 
+	my $column = delete $args->{'-column'};
+	die "You need to specify the -column option" unless defined $column;
+
 	$self->SUPER::Populate($args);
 	
 	$self->{ACTIVE} = 0;
+	$self->{COLUMN} = $column;
 	
 	my $label = $self->Label->pack(-side => 'left');
 	$self->Advertise(Label => $label);
 
 	my $sizer = $self->Label(
 		-justify => 'left',
-#		-relief => 'sunken',
 		-borderwidth => 2,
 	)->pack(-side => 'right', -fill => 'y');
 	$self->Advertise(Sizer => $sizer);
@@ -56,9 +123,7 @@ sub Populate {
 	$sizer->bind('<Motion>', [$self, 'Resize', $self, Ev('x'), Ev('y')]);
 	
 
-	my $sort = $self->Label(
-#		-image => $self->{ICONS}->{'none'},
-	)->pack(-side => 'right');
+	my $sort = $self->Label->pack(-side => 'right');
 	$self->Advertise(Sort => $sort);
 	
 	for ($self, $label, $sort) {
@@ -83,7 +148,6 @@ sub Populate {
 	$self->{SORT} = undef;
 	
 	$self->ConfigSpecs(
-		-resizecall => ['CALLBACK', undef, undef, sub {}],
 		-sortcall => ['CALLBACK', undef, undef, sub {}],
 		-sortorder => ['METHOD', undef, undef, 'none'],
 		-text => [$label],
@@ -110,7 +174,9 @@ sub Resize {
 		my $bordersize = ($bw +$lb + $sb + $rb);
 		my $min = $l->width + $r->width + $s->width + $bordersize;
 		unless ($width <= $min) {
-			$self->Callback('-resizecall', $width)
+			my $c = $self->{COLUMN};
+			my $w = $self->parent;
+			$w->columnWidth($c, $width);
 		}
 	}
 }
@@ -170,11 +236,35 @@ sub sortorder {
 	return $self->{SORT}	
 }
 
+=back
+
+=head1 LICENSE
+
+Same as Perl.
+
+=head1 AUTHOR
+
+Hans Jeuken (hanje at cpan dot org)
+
+=head1 BUGS AND CAVEATS
+
+If you find any bugs, please contact the author.
+
+=head1 SEE ALSO
+
+=over 4
+
+=item L<Tk::FileBrowser>
+
+=item L<Tk::HList>
+
+=back
+
+=cut
+
 1;
 
-
-
-
+1;
 
 
 

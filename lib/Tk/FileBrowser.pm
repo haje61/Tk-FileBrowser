@@ -9,7 +9,7 @@ Tk::FileBrowser - Multi column file system explorer
 use strict;
 use warnings;
 use vars qw($VERSION);
-$VERSION = 0.01;
+$VERSION = 0.02;
 
 use base qw(Tk::Derived Tk::Frame);
 Construct Tk::Widget 'FileBrowser';
@@ -22,7 +22,6 @@ use Tk;
 require Tk::ITree;
 require Tk::FileBrowser::Header;
 require Tk::ListEntry;
-require Tk::ProgressBar;
 
 my $file_icon = Tk->findINC('file.xpm');
 my $dir_icon = Tk->findINC('folder.xpm');
@@ -59,11 +58,42 @@ If you change the value you have to call B<refresh> to see your changes.
 =item Switch: B<-columns>
 
 Specify a list of column names to display. Only available at create
-time. Allowed values are 'Accessed', 'Created', 'Modified' and 'Size'.
+time. Allowed values are 'Accessed', 'Created', 'Modified', 'Size' and any you
+have defined through the B<-columntypes> option.
 
 Default value ['Size', 'Modified'].
 
 The 'Name' column is always present and always first.
+
+=item Switch: B<-columntypes>
+
+Specify a list of column types you ish to define. Here is an example we use in our test file. I adds the colun 'Big',
+which marks every entry that is geater than 2048 with an 'X', and sorts on size.
+
+ my $fb = $app->FileBrowser(
+    -columns => [qw[Size Modified Big]],
+    -columntypes => [
+       Big => {
+          display => sub {
+             my ($data) = @_;
+             my $s = $fb->getSize($data);
+             return 'X' if $s > 2048;
+             return '';
+          },
+          test => sub {
+             my ($data1, $data2) = @_;
+             return $fb->testSize($data1, $data2);
+          },
+       },
+    ],
+ )->pack(
+    -expand => 1,
+   -fill => 'both',
+ );
+
+=item Switch B<-dateformat>
+
+Defaultvalue: "%Y-%m-%d %H:%M". Specifies how time stamps should be represented.
 
 =item Switch: B<-directoriesfirst>
 
@@ -107,6 +137,20 @@ If you change the value you have to call B<refresh> to see your changes.
 
 =back
 
+=head1 ADVERTISED SUBWIDGETS
+
+=over 4
+
+=item B<Entry>
+
+Class Tk::ListEntry.
+
+=item B<Tree>
+
+Class Tk::ITree.
+
+=back
+
 =head1 METHODS
 
 =over 4
@@ -122,8 +166,39 @@ sub Populate {
 	$sorton = 'Name' unless defined $sorton;
 	my $sortorder = delete $args->{'-sortorder'};
 	$sortorder = 'ascending' unless defined $sortorder;
+	my $columntypes = delete $args->{'-columntypes'};
 
 	$self->SUPER::Populate($args);
+	
+	my %column_types = (
+		Name => {
+			display => sub { return $self->getNameString(@_) },
+			test => sub { return $self->testName(@_) },
+		},
+		Size => {
+			display => sub { return $self->getSizeString(@_) },
+			test => sub { return $self->testSize(@_) },
+		},
+		Accessed => {
+			display => sub { return $self->getDateString('atime', @_) },
+			test => sub { return $self->testDate('atime', @_) },
+		},
+		Created => {
+			display => sub { return $self->getDateString('ctime', @_) },
+			test => sub { return $self->testDate('ctime', @_) },
+		},
+		Modified => {
+			display => sub { return $self->getDateString('mtime', @_) },
+			test => sub { return $self->testDate('mtime', @_) },
+		},
+	);
+	if (defined $columntypes) {
+		while (@$columntypes) {
+			my $key = shift @$columntypes;
+			my $data = shift @$columntypes;
+			$column_types{$key} = $data;
+		}
+	}
 	
 	my $basetxt = '';
 	my $statustxt = '';
@@ -131,6 +206,7 @@ sub Populate {
 	$self->{BASETXT} = \$basetxt;
 	$self->{COLNAMES} = {};
 	$self->{COLNUMS} = {};
+	$self->{COLTYPES} = \%column_types;
 	$self->{JOBSTACK} = [];
 	$self->{POOL} = {};
 	$self->{SORTON} = $sorton;
@@ -150,6 +226,7 @@ sub Populate {
 		-bginterval => ['PASSIVE', undef, undef, 10],
 		-casedependantsort => ['PASSIVE', undef, undef, 0],
 		-columns => ['PASSIVE', undef, undef, $columns],
+		-dateformat => ['PASSIVE', undef, undef, "%Y-%m-%d %H:%M"],
 		-directoriesfirst => ['PASSIVE', undef, undef, 1],
 		-diriconcall => ['CALLBACK', undef, undef, ['DefaultDirIcon', $self]],
 		-fileiconcall => ['CALLBACK', undef, undef, ['DefaultFileIcon', $self]],
@@ -159,6 +236,9 @@ sub Populate {
 		-sortorder => ['METHOD', undef, undef, $sortorder],
 		-showhidden => ['PASSIVE', undef, undef, 0],
 		DEFAULT => [ $tree ],
+	);
+	$self->Delegates(
+		DEFAULT => $tree
 	);
 	return $self;
 }
@@ -186,20 +266,12 @@ sub Add {
 			$self->itemCreate($item, $col_num, @op,
 				-text => $name,
 			);
-		} elsif (exists $timedata{$col_name}) {
-			my $tag = $timedata{$col_name};
-			my $time = $data->{$tag};
-			if (defined $time) {
-				$time = $self->FormatTime($time);
-#				$time = scalar localtime $time;
-				$self->itemCreate($item, $col_num,
-					-text => $time,
-				);
-			}
-		} elsif ($col_name eq 'Size') {
+		} else {
+			my $call = $self->{COLTYPES}->{$col_name}->{'display'};
 			$self->itemCreate($item, $col_num,
-				-text => $self->GetSizeString($data),
+				-text => &$call($data),
 			);
+			
 		}
 	}
 	$self->autosetmode;
@@ -220,7 +292,12 @@ sub bgCurJob {
 	my ($path, $data, $handle) = @$job;
 	unless (defined $handle) {
 		$handle = $self->GetDirHandle($path);
-		push @$job, $handle;
+		if (defined $handle) {
+			push @$job, $handle
+		} else { #directory cannot be opened
+			shift @$stack;
+			return $self->bgCurJob;
+		}
 	}
 	return $path, $data, $handle;
 }
@@ -229,6 +306,10 @@ sub bgCycle {
 	my $self = shift;
 	my $stack = $self->{JOBSTACK};
 	my ($path, $data, $handle) = $self->bgCurJob;
+	unless (defined $path) {
+		$self->bgStop;
+		return;
+	}
 	my $sep = $self->cget('-separator');
 	my $fpath = $path; my $fdata = $data;
 	for (1 .. 10) {
@@ -249,7 +330,7 @@ sub bgCycle {
 			my $fullpath = $item;
 			$fullpath = "$path$sep$item" unless $path eq '';
 
-			my $cdat = $self->GetStat($fullname);
+			my $cdat = $self->getStat($fullname);
 			$data->{'children'}->{$item} = $cdat;
 			if ($path eq '') {
 				$self->Add($path, $item, $cdat);
@@ -261,8 +342,8 @@ sub bgCycle {
 
 			my $col = $self->ColNum('Size');
 			if ((defined $col) and ($path ne '')) {
-				my $size = $self->GetSize($data);
-				my $text = $self->GetSizeString($data);
+				my $size = $self->getSize($data);
+				my $text = $self->getSizeString($data);
 				$self->itemConfigure($path, $col, -text => $text);
 				$self->PHAdd($path) unless $self->PHExists($path) or ($size eq 0);
 			}
@@ -302,6 +383,17 @@ sub bgCycle {
 	$self->bgStart if exists $self->{'bg_id'};
 }
 
+sub bgReset {
+	my $self = shift;
+	my $stack = $self->{JOBSTACK};
+	if (@$stack) {
+		my $first = $stack->[0];
+		closedir $first->[2] if defined $first->[2];
+		while (@$stack) { shift @$stack }
+	}
+	$self->bgStop
+}
+
 sub bgStart {
 	my $self = shift;
 	my $interval = $self->cget('-bginterval');
@@ -322,6 +414,38 @@ sub bgStop {
 	delete $self->{'bg_id'};
 }
 
+sub branchClose {
+	my ($self, $entry) = @_;
+	$self->close($entry);
+	$self->infoData($entry)->{'open'} = 0;
+}
+
+sub branchOpen {
+	my ($self, $entry) = @_;
+#	return if exists $self->{'bg_id'};
+	my $data = $self->infoData($entry);
+	unless ($data->{'open'}) {
+		$self->open($entry);
+		my $sep = $self->cget('-separator');
+		my @children = $self->infoChildren($entry);
+		if ($self->PHExists($entry) and (@children eq 1)) {
+			$self->PHDelete($entry);
+			my $data = $self->infoData($entry);
+			my $children = $data->{'children'};
+			for (sort keys %$children) {
+				$self->Add($entry, $_, $children->{$_});
+				my $child = "$entry$sep$_";
+				my $data = $children->{$_};
+				if (exists $data->{'children'}) {
+					$self->bgAddJob($child, $data);
+					$self->bgStartConditional;
+				}
+			}
+		}
+		$data->{'open'} = 1;
+	} 
+}
+
 sub ColName {
 	my ($self, $num) = @_;
 	return $self->{COLNUMS}->{$num}
@@ -332,31 +456,22 @@ sub ColNum {
 	return $self->{COLNAMES}->{$name}
 }
 
-sub ColumnResize {
-	my ($self, $column, $size) = @_;
-	$self->columnWidth($column, $size);
-}
-
 sub CreateTreeWidget {
 	my ($self, @columns) = @_;
 	unshift @columns, 'Name';
-	my $tree = $self->Subwidget('Tree');
-	my $col_names = $self->{COLNAMES};
-	my $col_nums = $self->{COLNUMS};
-	if (defined $tree) {
-		$tree->destroy;
-		$col_names = {};
-		$col_nums = {};
-	}
+	my $col_names = {};
+	my $col_nums = {};
 	my $num_col = @columns;
 	my $sep = '/';
 	$sep = '\\' if $osname eq 'MSWin32';
-	$tree = $self->Scrolled('ITree',
-		-separator => $sep,
+
+	my $tree = $self->Scrolled('ITree', 
 		-columns => $num_col,
 		-command => ['Invoke', $self],
 		-header => 1,
 		-indicatorcmd => ['IndicatorPressed', $self],
+		-leftrightcall => ['LeftRight', $self],
+		-separator => $sep,
 		-scrollbars => 'osoe',
 	)->pack(
 		-after => $self->Subwidget('Entry'),
@@ -365,6 +480,7 @@ sub CreateTreeWidget {
 		-expand => 1, 
 		-fill => 'both',
 	);
+
 	$self->Advertise(Tree => $tree);
 	my $column = 0;
 	for (@columns) {
@@ -376,8 +492,8 @@ sub CreateTreeWidget {
 		$col_names->{$item} = $n;
 		$col_nums->{$n} = $item;
 		my $header = $tree->Header(@so,
+			-column => $column,
 			-sortcall => ['SortMode', $self],
-			-resizecall => ['ColumnResize', $self, $n],
 			-text => $_
 		);
 		$tree->headerCreate($column, -itemtype => 'window', -widget => $header);
@@ -385,9 +501,6 @@ sub CreateTreeWidget {
 	}
 	$self->{COLNAMES} = $col_names;
 	$self->{COLNUMS} = $col_nums;
-	$self->Delegates(
-		DEFAULT => $tree,
-	);
 	return $tree
 }
 
@@ -404,14 +517,21 @@ sub EditSelect {
 	my $e = $self->Subwidget('Entry');
 	my $folder = $e->get;
 	$e->Subwidget('List')->popDown;
-	$self->update;
 	$self->load($folder) if (-e $folder) and (-d $folder);
 }
 
+=item B<getDateString>I<($type, $data)>
 
-sub FormatTime {
-	my ($self, $stamp) = @_;
-	return strftime("%Y-%m-%d %H:%M", localtime($stamp))
+Returns the formatted date string of one of the date items in I<$data>;
+I<$type> can be 'atime', 'ctime' or 'mtime'
+
+=cut
+
+sub getDateString {
+	my ($self, $key, $data) = @_;
+	my $raw = $data->{$key};
+	return '' unless defined $raw;
+	return strftime($self->cget('-dateformat'), localtime($raw))
 }
 
 sub GetDirHandle {
@@ -453,6 +573,17 @@ sub GetParent {
 	return $dir
 }
 
+=item B<getNameString>I<($data)>
+
+Returns the name to be displayed for I<$data>.
+
+=cut
+
+sub getNameString {
+	my ($self, $data) = @_;
+	return basename($data->{'name'});
+}
+
 sub GetRootFolder {
 	my $self = shift;
 	my $root = '/';
@@ -466,7 +597,15 @@ sub GetPeers {
 	return $self->infoChildren($self->GetParent($name));
 }
 
-sub GetSize {
+=item B<getSize>I<($data)>
+
+Returns the size of the item represented in I<$data>.
+If I<$data> contains a folder, it returns the number of items. If not if
+returns the size in bytes.
+
+=cut
+
+sub getSize {
 	my ($self, $data) = @_;
 	my $size;
 	if (exists $data->{'children'}) {
@@ -475,12 +614,19 @@ sub GetSize {
 	} else {
 		$size = $data->{'size'};
 	}
+	return 0 unless defined $size;
 	return $size
 }
 
-sub GetSizeString {
+=item B<getSizeString>I<($data)>
+
+Returns the formatted size string to be displayed for I<$data>.
+
+=cut
+
+sub getSizeString {
 	my ($self, $data) = @_;
-	my $size = $self->GetSize($data);
+	my $size = $self->getSize($data);
 	if (exists $data->{'children'}) {
 		$size = "$size items" if $size ne 1;
 		$size = "$size item" if $size eq 1;
@@ -504,26 +650,38 @@ sub GetSizeString {
 	return $size
 }
 
-sub GetStat {
+=item B<getStat>I<($item)>
+
+Returns a reference to an info hash for $item. I<$item> if the full name of an existing file or folder. 
+This data structure is used throughout this package. 
+Whenever you seee I<$data> in this document it refers to one of these.
+If looks like this:
+
+ $stat = {
+    name => $item,
+    size => $some_size,
+    atime => $some_time_stamp_1,
+    ctime => $some_time_stamp_2,
+    mtime => $some_time_stamp_3,
+ 
+    #the ones below only if $item is folder.
+    children => {}, #default
+    loaded => 0, #default
+    open => 0, #default
+ }
+
+=cut
+
+sub getStat {
 	my ($self, $item) = @_;
 	my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = stat($item);
 	my %itemdata = (
-#		dev => $dev,
-#		ino => $ino,
-#		mode => $mode,
-#		nlink => $nlink,
-#		uid => $uid,
-#		gid => $gid,
-#		rdev => $rdev,
+		name => $item,
 		size => $size,
 		atime => $atime,
 		mtime => $mtime,
 		ctime => $ctime,
-#		blksize => $blksize,
-#		blocks => $blocks,
 	);
-#	my $per = '';
-#	if (-d $item) { $per = "d$per" } else { $per = "-$per" }
 	if (-d $item) {
 		$itemdata{'loaded'} = 0;
 		$itemdata{'children'} = {};
@@ -537,28 +695,11 @@ sub IndicatorPressed {
 	if ($action eq '<Activate>') {
 		my $mode = $self->getmode($entry);
 		if ($mode eq 'open') {
-			my $sep = $self->cget('-separator');
-			my @children = $self->infoChildren($entry);
-			if ($self->PHExists($entry) and (@children eq 1)) {
-				$self->PHDelete($entry);
-				my $data = $self->infoData($entry);
-				my $children = $data->{'children'};
-				for (sort keys %$children) {
-					$self->Add($entry, $_, $children->{$_});
-					my $child = "$entry$sep$_";
-					my $data = $children->{$_};
-					if (exists $data->{'children'}) {
-						$self->bgAddJob($child, $data);
-						$self->bgStartConditional;
-					}
-				}
-			}
-			$self->infoData($entry)->{'open'} = 1;
+			$self->branchOpen($entry)
 		} else {
-			$self->infoData($entry)->{'open'} = 0;
+			$self->branchClose($entry)
 		}
 	}
-	$self->IndicatorCmd($entry, $action);
 }
 
 sub Invoke {
@@ -592,6 +733,15 @@ sub IsLoaded {
 	return $data->{'loaded'}
 }
 
+sub LeftRight {
+	my ($self, $dir, $entry) = @_;
+	if ($dir eq 'left') { 
+		$self->branchClose($entry);
+	} else {
+		$self->branchOpen($entry);
+	}
+}
+
 =item B<load>I<($folder)>
 
 loads $folder into memory and refreshes the display
@@ -623,7 +773,7 @@ sub load {
 	}
 	my $entry = $self->Subwidget('Entry');
 	$entry->configure(-values => \@folders);
-	my $data = $self->GetStat($folder);
+	my $data = $self->getStat($folder);
 	$self->bgStop;
 	$self->deleteAll;
 	$self->{POOL} = $data;
@@ -641,39 +791,10 @@ sub NumberOfColumns {
 }
 
 sub OrderTest {
-	my ($self, $item, $peer, $itemdata) = @_;
+	my ($self, $item, $peer) = @_;
 	my $key = $self->{SORTON};
-	my $sort =  $self->{SORTORDER};
-	if ($key eq 'Name') {
-		my $name = basename($item);
-		$peer = basename($peer);
-		unless ($self->cget('-casedependantsort')) {
-			$name = lc($name);
-			$peer = lc($peer);
-		}
-		if ($sort eq 'ascending') { 
-			return $name le $peer
-		} else {
-			return $name ge $peer
-		}
-	} elsif ($key eq 'Size') {
-		my $isize = $self->GetSize($itemdata);
-		my $psize = $self->GetSize($self->infoData($peer));
-		if ($sort eq 'ascending') { 
-			return $isize <= $psize
-		} else {
-			return $isize >= $psize
-		}
-	} else {
-		my $tag = $timedata{$key};
-		my $pdat = $self->infoData($peer)->{$tag};
-		my $idat = $itemdata->{$tag};
-		if ($sort eq 'ascending') { 
-			return $idat <= $pdat
-		} else {
-			return $idat >= $pdat
-		}
-	}
+	my $call = $self->{COLTYPES}->{$key}->{'test'};
+	return &$call($item, $peer);
 }
 
 sub PHAdd {
@@ -707,10 +828,11 @@ sub Position {
 	if ($self->IsDir($item) and $self->cget('-directoriesfirst')) {
 		for (@peers) {
 			my $peer = $_;
+			my $pdat = $self->infoData($peer);
 			if ($self->IsFile($peer)) { #we arrived at the end of the directory section
 				push @op, -before => $peer;
 				last;
-			} elsif ($self->OrderTest($item, $peer, $itemdata)) {
+			} elsif ($self->OrderTest($itemdata, $pdat)) {
 				push @op, -before => $peer;
 				last;
 			}
@@ -718,9 +840,10 @@ sub Position {
 	} else {
 		for (@peers) {
 			my $peer = $_;
+			my $pdat = $self->infoData($peer);
 			if ($self->IsDir($peer)) { 
 				#we are still in directory section, ignoring
-			} elsif ($self->OrderTest($item, $peer, $itemdata)) {
+			} elsif ($self->OrderTest($itemdata, $pdat)) {
 				push @op, -before => $peer;
 				last;
 			}
@@ -750,6 +873,8 @@ sub refresh {
 	my $root = $self->{POOL}->{'children'};
 	for (sort keys %$root) {
 		$self->refreshRecursive('', $_, $root->{$_});
+		my $open = $root->{$_}->{'open'};
+		$self->close($_) if (defined $open) and $open;
 	}
 	$self->bgStart if $bg;
 }
@@ -758,15 +883,16 @@ sub refreshRecursive {
 	my ($self, $path, $name, $data) = @_;
 	my $item = $self->Add($path, $name, $data);
 	if ($self->IsDir($item) and ($data->{'loaded'})) {
+		my $open = $data->{'open'};
 		my $c = $data->{'children'};
-		if ($data->{'open'}) {
+		if ($open) {
 			for (sort keys %$c) {
 				$self->refreshRecursive($item, $_, $c->{$_});
 			}
 		} elsif (%$c) {
 			$self->PHAdd($item)
 		}
-		$self->close($item) unless $data->{'open'};
+		$self->close($item) unless $open;
 	}
 	$self->update;
 }
@@ -802,6 +928,70 @@ sub sortorder {
 	return $self->{SORTORDER}
 }
 
+=item B<testDate>I<($type, $data1, $data2)>
+
+$type can be 'atime', 'ctime' or 'mtime'.
+
+Compares the date stamps in $data1 and $data2 and returns true if $data1 wins.
+
+=cut
+
+sub testDate {
+	my ($self, $key, $data1, $data2) = @_;
+	my $sort = $self->sortorder;
+	my $idat = $data1->{$key};
+	my $pdat = $data2->{$key};
+	return 1 unless defined $idat;
+	return 1 unless defined $pdat;
+	if ($sort eq 'ascending') { 
+		return $idat <= $pdat
+	} else {
+		return $idat >= $pdat
+	}
+}
+
+=item B<testName>I<($data1, $data2)>
+
+Compares the names of $data1 and $data2 and returns true if $data1 wins.
+
+=cut
+
+sub testName {
+	my ($self, $data1, $data2) = @_;
+	my $sort = $self->sortorder;
+	my $name = basename($data1->{'name'});
+	my $peer = basename($data2->{'name'});
+	unless ($self->cget('-casedependantsort')) {
+		$name = lc($name);
+		$peer = lc($peer);
+	}
+	if ($sort eq 'ascending') { 
+		return $name lt $peer
+	} else {
+		return $name gt $peer
+	}
+}
+
+=item B<testSize>I<($data1, $data2)>
+
+Compares the sizes of $data1 and $data2 and returns true if $data1 wins.
+
+=cut
+
+sub testSize {
+	my ($self, $data1, $data2) = @_;
+	my $sort = $self->sortorder;
+	my $isize = $self->getSize($data1);
+	my $psize = $self->getSize($data2);
+	return 1 unless defined $isize;
+	return 1 unless defined $psize;
+	if ($sort eq 'ascending') { 
+		return $isize <= $psize
+	} else {
+		return $isize >= $psize
+	}
+}
+
 =back
 
 =head1 LICENSE
@@ -817,10 +1007,6 @@ Hans Jeuken (hanje at cpan dot org)
 =over 4
 
 =item Allow columns to be configured on the fly.
-
-=item Add Column types for Owner, Group, Permissions
-
-=item Make column types user definable.
 
 =item Recognize links.
 
@@ -845,30 +1031,6 @@ If you find any bugs, please contact the author.
 =cut
 
 1;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
