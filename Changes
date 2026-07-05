@@ -1,5 +1,8 @@
 Revision history for Perl extension Tk::FileBrowser.
 
+0.14  Sun Jul 05 2026
+	- Removed use statement for deleted module Images.
+
 0.13  Sun Jul 05 2026
 	- Fixed missing dependencies in Makefile.PL.
 
